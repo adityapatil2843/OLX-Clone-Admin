@@ -1,14 +1,18 @@
 "use client";
 
 import * as React from "react";
-import { ServerCategory } from "@/features/admin/types";
-import { adminApi } from "@/features/admin/api";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import type { ServerCategory } from "@/features/categories/types";
+import { categoriesApi } from "@/features/categories/api";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { ErrorState } from "@/components/ui/error-state";
+import { OfflineState } from "@/components/ui/offline-state";
+import { EmptyState } from "@/components/ui/empty-state";
+import { useDebounce, useNetworkStatus } from "@/hooks";
 import {
   FolderTree,
   Plus,
@@ -19,14 +23,19 @@ import {
   Trash2,
   RefreshCw,
   Search,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function CategoryManagementPage() {
+  const isOnline = useNetworkStatus();
   const [categories, setCategories] = React.useState<ServerCategory[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+
+  // Search
   const [search, setSearch] = React.useState("");
+  const debouncedSearch = useDebounce(search, 300);
 
   const [expandedCategoryId, setExpandedCategoryId] = React.useState<string | null>(null);
   const [isAddCategoryOpen, setIsAddCategoryOpen] = React.useState(false);
@@ -39,6 +48,7 @@ export default function CategoryManagementPage() {
   const [parentId, setParentId] = React.useState<string>("none");
   const [displayOrder, setDisplayOrder] = React.useState<number>(0);
   const [submitting, setSubmitting] = React.useState(false);
+  const [reloadCounter, setReloadCounter] = React.useState(0);
 
   // Deactivate confirm modal
   const [deactivateModal, setDeactivateModal] = React.useState<{
@@ -49,32 +59,40 @@ export default function CategoryManagementPage() {
     category: null,
   });
 
-  const loadCategories = React.useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await adminApi.listCategories(true);
-      setCategories(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load categories from backend");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
+  // Race-condition immune data fetch
   React.useEffect(() => {
-    void loadCategories();
-  }, [loadCategories]);
+    let isCurrent = true;
+
+    categoriesApi
+      .list(true)
+      .then((data) => {
+        if (!isCurrent) return;
+        setCategories(data);
+        setError(null);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (!isCurrent) return;
+        setError(err instanceof Error ? err.message : "Failed to load categories from backend");
+        setLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [reloadCounter]);
 
   const filteredCategories = React.useMemo(() => {
+    if (!debouncedSearch.trim()) return categories;
+    const q = debouncedSearch.toLowerCase();
     return categories.filter((c) => {
       const matchesSearch =
-        c.name.toLowerCase().includes(search.toLowerCase()) ||
-        c.slug.toLowerCase().includes(search.toLowerCase()) ||
-        (c.description && c.description.toLowerCase().includes(search.toLowerCase()));
+        c.name.toLowerCase().includes(q) ||
+        c.slug.toLowerCase().includes(q) ||
+        (c.description && c.description.toLowerCase().includes(q));
       return matchesSearch;
     });
-  }, [categories, search]);
+  }, [categories, debouncedSearch]);
 
   const rootCategories = React.useMemo(() => {
     return filteredCategories.filter((c) => !c.parentId);
@@ -108,7 +126,7 @@ export default function CategoryManagementPage() {
     setSubmitting(true);
     try {
       if (editingCategory) {
-        await adminApi.updateCategory(editingCategory.id, {
+        await categoriesApi.update(editingCategory.id, {
           name: name.trim(),
           slug: slug.trim() || undefined,
           description: description.trim() || undefined,
@@ -118,7 +136,7 @@ export default function CategoryManagementPage() {
         toast.success(`Category "${name}" updated successfully!`);
         setEditingCategory(null);
       } else {
-        await adminApi.createCategory({
+        await categoriesApi.create({
           name: name.trim(),
           slug: slug.trim() || undefined,
           description: description.trim() || undefined,
@@ -128,7 +146,8 @@ export default function CategoryManagementPage() {
         toast.success(`Category "${name}" created successfully!`);
         setIsAddCategoryOpen(false);
       }
-      await loadCategories();
+      setLoading(true);
+      setReloadCounter((prev) => prev + 1);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save category");
     } finally {
@@ -142,16 +161,34 @@ export default function CategoryManagementPage() {
 
     setSubmitting(true);
     try {
-      await adminApi.deleteCategory(cat.id);
+      await categoriesApi.delete(cat.id);
       toast.success(`Category "${cat.name}" deactivated`);
       setDeactivateModal({ open: false, category: null });
-      await loadCategories();
+      setLoading(true);
+      setReloadCounter((prev) => prev + 1);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to deactivate category");
     } finally {
       setSubmitting(false);
     }
   };
+
+  const handleClearSearch = () => {
+    setSearch("");
+  };
+
+  if (!isOnline) {
+    return (
+      <div className="py-12">
+        <OfflineState
+          onRetry={() => {
+            setLoading(true);
+            setReloadCounter((prev) => prev + 1);
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -171,7 +208,10 @@ export default function CategoryManagementPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void loadCategories()}
+            onClick={() => {
+              setLoading(true);
+              setReloadCounter((prev) => prev + 1);
+            }}
             disabled={loading}
             className="text-xs h-9 shrink-0"
           >
@@ -186,14 +226,14 @@ export default function CategoryManagementPage() {
       </div>
 
       {error && (
-        <Card className="border-rose-200 bg-rose-50 text-rose-900">
-          <CardContent className="py-3 text-xs flex items-center justify-between">
-            <span>Error fetching categories: {error}</span>
-            <Button size="sm" variant="outline" onClick={() => void loadCategories()} className="h-7 text-xs bg-white">
-              Retry
-            </Button>
-          </CardContent>
-        </Card>
+        <ErrorState
+          title="Error fetching categories"
+          message={error}
+          onRetry={() => {
+            setLoading(true);
+            setReloadCounter((prev) => prev + 1);
+          }}
+        />
       )}
 
       {/* Filter */}
@@ -205,8 +245,18 @@ export default function CategoryManagementPage() {
               placeholder="Search category by name or slug..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 h-9 text-xs"
+              className="pl-9 pr-9 h-9 text-xs"
             />
+            {search && (
+              <button
+                type="button"
+                onClick={handleClearSearch}
+                aria-label="Clear search"
+                className="absolute right-2.5 top-2.5 rounded-full p-0.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -220,11 +270,19 @@ export default function CategoryManagementPage() {
           </div>
         </div>
       ) : rootCategories.length === 0 ? (
-        <Card>
-          <CardContent className="py-16 text-center text-xs text-slate-500">
-            No categories found. Click &quot;Add Category&quot; to create a new category in the database.
-          </CardContent>
-        </Card>
+        <div className="py-8">
+          <EmptyState
+            icon={FolderTree}
+            title="No Categories Found"
+            description={
+              search
+                ? `No categories match "${search}". Try searching for another name.`
+                : "No categories are configured yet. Click 'Add Category' to get started."
+            }
+            actionLabel={search ? "Clear Search" : "Add Category"}
+            onAction={search ? handleClearSearch : handleOpenCreate}
+          />
+        </div>
       ) : (
         <div className="space-y-3">
           {rootCategories.map((cat) => {
@@ -249,9 +307,9 @@ export default function CategoryManagementPage() {
                           {cat.isActive ? "Active" : "Inactive"}
                         </Badge>
                       </div>
-                      <span className="text-xs text-slate-500 font-mono">
-                        Slug: /{cat.slug} • Order: {cat.displayOrder} • {subcategories.length} subcategories
-                      </span>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Slug: <span className="font-mono text-slate-700">/{cat.slug}</span> • Order: {cat.displayOrder} • {subcategories.length} subcategories
+                      </p>
                     </div>
                   </div>
 
@@ -262,7 +320,8 @@ export default function CategoryManagementPage() {
                       className="h-8 text-xs"
                       onClick={() => handleOpenEdit(cat)}
                     >
-                      <Edit2 className="h-3.5 w-3.5 mr-1" /> Edit
+                      <Edit2 className="h-3.5 w-3.5 mr-1" />
+                      Edit
                     </Button>
                     <Button
                       size="sm"
@@ -270,67 +329,81 @@ export default function CategoryManagementPage() {
                       className="h-8 text-xs"
                       onClick={() => setDeactivateModal({ open: true, category: cat })}
                     >
-                      <Trash2 className="h-3.5 w-3.5 mr-1" /> Deactivate
+                      <Trash2 className="h-3.5 w-3.5 mr-1" />
+                      Deactivate
                     </Button>
-                    <div className="p-1 text-slate-400 cursor-pointer" onClick={() => setExpandedCategoryId(isExpanded ? null : cat.id)}>
-                      {isExpanded ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
+                    <div className="p-1 text-slate-400">
+                      {isExpanded ? (
+                        <ChevronDown className="h-5 w-5" />
+                      ) : (
+                        <ChevronRight className="h-5 w-5" />
+                      )}
                     </div>
                   </div>
                 </div>
 
-                {/* Subcategories Accordion */}
+                {/* Subcategories Expansion List */}
                 {isExpanded && (
-                  <div className="p-4 bg-slate-50/70 border-t border-slate-200 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Subcategories ({subcategories.length})
-                      </h4>
+                  <div className="bg-slate-50/80 border-t border-slate-100 p-4 space-y-2">
+                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-200/60">
+                      <span className="text-xs font-semibold text-slate-600">
+                        Subcategories of {cat.name} ({subcategories.length})
+                      </span>
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-7 text-xs"
+                        className="h-7 text-xs bg-white"
                         onClick={() => {
                           setName("");
                           setSlug("");
                           setDescription("");
                           setParentId(cat.id);
-                          setDisplayOrder(0);
+                          setDisplayOrder(subcategories.length);
                           setIsAddCategoryOpen(true);
                         }}
                       >
-                        <Plus className="h-3 w-3 mr-1" /> Add Child to {cat.name}
+                        <Plus className="h-3.5 w-3.5 mr-1" />
+                        Add Subcategory
                       </Button>
                     </div>
 
                     {subcategories.length === 0 ? (
-                      <div className="p-4 text-center text-xs text-slate-500 bg-white rounded-lg border border-dashed border-slate-200">
-                        No child subcategories for {cat.name}.
-                      </div>
+                      <p className="text-xs text-slate-400 italic py-2">
+                        No subcategories nested under {cat.name}.
+                      </p>
                     ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                         {subcategories.map((sub) => (
                           <div
                             key={sub.id}
-                            className="bg-white rounded-lg p-3 border border-slate-200 flex items-center justify-between text-xs"
+                            className="bg-white p-3 rounded-lg border border-slate-200/80 flex items-center justify-between"
                           >
-                            <div className="min-w-0 pr-2">
-                              <span className="font-semibold text-slate-900 block truncate">{sub.name}</span>
-                              <span className="text-[10px] text-slate-400 font-mono block truncate">/{sub.slug}</span>
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-medium text-slate-800 text-xs">{sub.name}</span>
+                                <Badge variant={sub.isActive ? "success" : "secondary"} className="text-[10px] py-0 px-1.5">
+                                  {sub.isActive ? "Active" : "Inactive"}
+                                </Badge>
+                              </div>
+                              <span className="text-[11px] font-mono text-slate-400 block mt-0.5">
+                                /{sub.slug}
+                              </span>
                             </div>
-                            <div className="flex items-center gap-1 shrink-0">
+
+                            <div className="flex items-center gap-1">
                               <Button
                                 size="sm"
                                 variant="outline"
                                 className="h-7 w-7 p-0"
                                 onClick={() => handleOpenEdit(sub)}
-                                title="Edit"
+                                title="Edit subcategory"
                               >
-                                <Edit2 className="h-3 w-3" />
+                                <Edit2 className="h-3 w-3 text-slate-600" />
                               </Button>
                               <Button
                                 size="sm"
-                                variant="destructive"
-                                className="h-7 w-7 p-0"
+                                variant="outline"
+                                className="h-7 w-7 p-0 text-rose-600 hover:bg-rose-50 border-rose-200"
                                 onClick={() => setDeactivateModal({ open: true, category: sub })}
                                 title="Deactivate"
                               >
@@ -365,78 +438,90 @@ export default function CategoryManagementPage() {
             setEditingCategory(null);
           }}
         >
-          <DialogTitle>{editingCategory ? `Edit Category: ${editingCategory.name}` : "Add New Category"}</DialogTitle>
+          <DialogTitle>
+            {editingCategory ? `Edit Category: ${editingCategory.name}` : "Create New Category"}
+          </DialogTitle>
           <DialogDescription>
-            Configure marketplace taxonomy and hierarchy stored in the database.
+            Categories define the marketplace navigation taxonomy and product filtering.
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSaveCategory} className="space-y-3 py-2 text-xs">
-          <div>
-            <label className="font-semibold text-slate-700 block mb-1">Category Name *</label>
-            <Input
-              placeholder="e.g. Electric Vehicles"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="h-9 text-xs"
-              required
-            />
-          </div>
+        <form onSubmit={handleSaveCategory}>
+          <div className="py-3 space-y-3 text-xs">
+            <div>
+              <label className="font-semibold text-slate-700 block mb-1">
+                Category Name *
+              </label>
+              <Input
+                placeholder="e.g. Commercial Vehicles"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                className="h-9 text-xs"
+              />
+            </div>
 
-          <div>
-            <label className="font-semibold text-slate-700 block mb-1">URL Slug (lowercase-with-hyphens)</label>
-            <Input
-              placeholder="e.g. electric-vehicles"
-              value={slug}
-              onChange={(e) => setSlug(e.target.value)}
-              className="h-9 text-xs font-mono"
-            />
-          </div>
+            <div>
+              <label className="font-semibold text-slate-700 block mb-1">
+                URL Slug (Optional, auto-generated if left blank)
+              </label>
+              <Input
+                placeholder="e.g. commercial-vehicles"
+                value={slug}
+                onChange={(e) => setSlug(e.target.value)}
+                className="h-9 text-xs font-mono"
+              />
+            </div>
 
-          <div>
-            <label className="font-semibold text-slate-700 block mb-1">Parent Category</label>
-            <Select
-              value={parentId}
-              onChange={(e) => setParentId(e.target.value)}
-              className="h-9 text-xs"
-            >
-              <option value="none">None (Top-Level Category)</option>
-              {categories
-                .filter((c) => !editingCategory || c.id !== editingCategory.id)
-                .map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-            </Select>
-          </div>
+            <div>
+              <label className="font-semibold text-slate-700 block mb-1">
+                Parent Category
+              </label>
+              <Select
+                value={parentId}
+                onChange={(e) => setParentId(e.target.value)}
+                className="h-9 text-xs"
+              >
+                <option value="none">None (Root Category)</option>
+                {categories
+                  .filter((c) => !c.parentId && (!editingCategory || c.id !== editingCategory.id))
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+              </Select>
+            </div>
 
-          <div>
-            <label className="font-semibold text-slate-700 block mb-1">Description (Optional)</label>
-            <Input
-              placeholder="Brief description for marketplace browsing"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="h-9 text-xs"
-            />
-          </div>
+            <div>
+              <label className="font-semibold text-slate-700 block mb-1">
+                Description
+              </label>
+              <Input
+                placeholder="Short description for SEO and buyers"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="h-9 text-xs"
+              />
+            </div>
 
-          <div>
-            <label className="font-semibold text-slate-700 block mb-1">Display Order</label>
-            <Input
-              type="number"
-              min="0"
-              value={displayOrder}
-              onChange={(e) => setDisplayOrder(Number(e.target.value))}
-              className="h-9 text-xs"
-            />
+            <div>
+              <label className="font-semibold text-slate-700 block mb-1">
+                Display Order Priority
+              </label>
+              <Input
+                type="number"
+                value={displayOrder}
+                onChange={(e) => setDisplayOrder(parseInt(e.target.value, 10) || 0)}
+                className="h-9 text-xs"
+              />
+            </div>
           </div>
 
           <DialogFooter>
             <Button
               type="button"
               variant="outline"
-              size="sm"
               disabled={submitting}
               onClick={() => {
                 setIsAddCategoryOpen(false);
@@ -445,34 +530,29 @@ export default function CategoryManagementPage() {
             >
               Cancel
             </Button>
-            <Button type="submit" size="sm" disabled={submitting}>
+            <Button type="submit" disabled={submitting}>
               {submitting ? "Saving..." : editingCategory ? "Save Changes" : "Create Category"}
             </Button>
           </DialogFooter>
         </form>
       </Dialog>
 
-      {/* Deactivate Category Confirmation Dialog */}
+      {/* Deactivate Modal */}
       {deactivateModal.open && (
         <Dialog
           open={deactivateModal.open}
           onOpenChange={(open) => setDeactivateModal((prev) => ({ ...prev, open }))}
         >
-          <DialogHeader onClose={() => setDeactivateModal((prev) => ({ ...prev, open: false }))}>
-            <DialogTitle>Deactivate Category?</DialogTitle>
+          <DialogHeader onClose={() => setDeactivateModal({ open: false, category: null })}>
+            <DialogTitle>Deactivate Category &quot;{deactivateModal.category?.name}&quot;?</DialogTitle>
             <DialogDescription>
-              Category: {deactivateModal.category?.name} ({deactivateModal.category?.slug})
+              Deactivating will mark this category as inactive and hide it from buyer catalog browsing.
             </DialogDescription>
           </DialogHeader>
-
-          <div className="py-3 text-xs text-slate-600 leading-relaxed">
-            Deactivating this category will set its status to inactive (`isActive: false`) on the server. Active listings under this category will remain preserved in the database.
-          </div>
 
           <DialogFooter>
             <Button
               variant="outline"
-              size="sm"
               disabled={submitting}
               onClick={() => setDeactivateModal({ open: false, category: null })}
             >
@@ -480,11 +560,10 @@ export default function CategoryManagementPage() {
             </Button>
             <Button
               variant="destructive"
-              size="sm"
               disabled={submitting}
               onClick={handleDeactivate}
             >
-              {submitting ? "Deactivating..." : "Confirm Deactivation"}
+              {submitting ? "Deactivating..." : "Confirm Deactivate"}
             </Button>
           </DialogFooter>
         </Dialog>

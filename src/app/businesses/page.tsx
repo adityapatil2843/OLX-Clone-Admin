@@ -13,16 +13,14 @@ import { ConfirmModal } from "@/components/ui/confirm-modal";
 import {
   Building2,
   Search,
-  CheckCircle2,
   ShieldCheck,
   Award,
   Phone,
   Mail,
   MapPin,
   TrendingUp,
-  FileText,
   Star,
-  ExternalLink,
+  AlertTriangle,
 } from "lucide-react";
 import { formatINR, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -128,7 +126,24 @@ export default function BusinessManagementPage() {
             Manage GSTIN verified enterprises, merchant tier upgrades (Silver, Gold, Diamond), and B2C sales volumes.
           </p>
         </div>
+
+        <Badge variant="warning" className="w-fit text-xs px-3 py-1 font-semibold">
+          Blocked: Backend API Missing
+        </Badge>
       </div>
+
+      {/* Blocker & Unsupported Capability Notice */}
+      <Card className="border-amber-200 bg-amber-50/40">
+        <CardHeader>
+          <div className="flex items-center gap-2 text-amber-900 font-semibold text-base">
+            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
+            Feature Temporarily Unavailable - Backend Capability Missing
+          </div>
+          <CardDescription className="text-amber-800 text-xs mt-1 leading-relaxed">
+            Per strict project guidelines, fake operational functionality is disabled. The server does not provide admin endpoints for business accounts or GST verification. Data below is for UI evaluation only.
+          </CardDescription>
+        </CardHeader>
+      </Card>
 
       {/* Filter Toolbar */}
       <Card>

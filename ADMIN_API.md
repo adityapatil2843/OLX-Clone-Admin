@@ -16,7 +16,7 @@ All `/admin/*` endpoints require `Authorization: Bearer <access-token>` and an `
 | List reports | GET | `/admin/reports?page=1&limit=20` | `page`, `limit` | ADMIN, MODERATOR |
 | Resolve report | PATCH | `/admin/reports/:id` | `{ status: REVIEWED\|RESOLVED\|DISMISSED, resolutionNotes? }` | ADMIN, MODERATOR |
 | Moderate listing | PATCH | `/admin/listings/:id/moderate` | `{ status: ACTIVE\|DRAFT\|SOLD\|ARCHIVED, reason? }` | ADMIN, MODERATOR |
-| Moderate Reel | PATCH | `/admin/reels/:id/moderate` | `{ status: PUBLISHED\|DRAFT\|PROCESSING\|FAILED\|ARCHIVED, reason? }` | ADMIN, MODERATOR |
+| Moderate Reel | PATCH | `/admin/reels/:id/moderate` | `{ status: PUBLISHED\|DRAFT\|MODERATED\|ARCHIVED, reason? }` | ADMIN, MODERATOR |
 | Moderate user | PATCH | `/admin/users/:id/moderate` | `{ isActive?, role?, reason? }` | ADMIN |
 | Audit logs | GET | `/admin/audit-logs?page=1&limit=20` | `page`, `limit` | ADMIN |
 

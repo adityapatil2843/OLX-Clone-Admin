@@ -1,65 +1,78 @@
 "use client";
 
 import * as React from "react";
-import { AdminAuditLog, AdminPageMeta } from "@/features/admin/types";
-import { adminApi } from "@/features/admin/api";
+import type { AdminAuditLog } from "@/features/audit-logs/types";
+import type { AdminPageMeta } from "@/features/shared/types";
+import { auditLogsApi } from "@/features/audit-logs/api";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Pagination } from "@/components/ui/pagination";
+import { ErrorState } from "@/components/ui/error-state";
+import { OfflineState } from "@/components/ui/offline-state";
+import { EmptyState } from "@/components/ui/empty-state";
+import { useDebounce, useNetworkStatus } from "@/hooks";
 import {
   History,
   Search,
   RefreshCw,
-  AlertCircle,
-  Eye,
-  ChevronLeft,
-  ChevronRight,
-  Shield,
   FileCode,
+  X,
 } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 
 export default function AuditLogsPage() {
+  const isOnline = useNetworkStatus();
   const [logs, setLogs] = React.useState<AdminAuditLog[]>([]);
   const [meta, setMeta] = React.useState<AdminPageMeta>({
     page: 1,
     limit: 20,
     total: 0,
     totalPages: 1,
-    hasNextPage: false,
   });
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+
   const [page, setPage] = React.useState(1);
+  const [limit, setLimit] = React.useState(20);
   const [search, setSearch] = React.useState("");
+  const debouncedSearch = useDebounce(search, 300);
+
   const [selectedLog, setSelectedLog] = React.useState<AdminAuditLog | null>(null);
+  const [reloadCounter, setReloadCounter] = React.useState(0);
 
-  const fetchLogs = React.useCallback(async (targetPage = 1) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await adminApi.listAuditLogs(targetPage, 20);
-      setLogs(res.data || []);
-      if (res.meta) {
-        setMeta(res.meta);
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Failed to load audit logs from server.";
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
+  // Race-condition immune data fetch
   React.useEffect(() => {
-    fetchLogs(page);
-  }, [fetchLogs, page]);
+    let isCurrent = true;
+
+    auditLogsApi
+      .list(page, limit)
+      .then((res) => {
+        if (!isCurrent) return;
+        setLogs(res.data || []);
+        if (res.meta) {
+          setMeta(res.meta);
+        }
+        setError(null);
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (!isCurrent) return;
+        const message = err instanceof Error ? err.message : "Failed to load audit logs from server.";
+        setError(message);
+        setLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [page, limit, reloadCounter]);
 
   const filteredLogs = React.useMemo(() => {
-    if (!search.trim()) return logs;
-    const q = search.toLowerCase();
+    if (!debouncedSearch.trim()) return logs;
+    const q = debouncedSearch.toLowerCase();
     return logs.filter((log) => {
       const adminText = log.admin?.name || log.admin?.email || log.adminId;
       const actionText = log.action || "";
@@ -72,7 +85,22 @@ export default function AuditLogsPage() {
         detailsText.toLowerCase().includes(q)
       );
     });
-  }, [logs, search]);
+  }, [logs, debouncedSearch]);
+
+  const handlePageChange = (newPage: number) => {
+    setLoading(true);
+    setPage(newPage);
+  };
+
+  const handleLimitChange = (newLimit: number) => {
+    setLoading(true);
+    setLimit(newLimit);
+    setPage(1);
+  };
+
+  const handleClearSearch = () => {
+    setSearch("");
+  };
 
   const getActionBadge = (action: string) => {
     if (action.includes("DELETE") || action.includes("SUSPEND")) {
@@ -86,6 +114,19 @@ export default function AuditLogsPage() {
     }
     return <Badge variant="secondary">{action}</Badge>;
   };
+
+  if (!isOnline) {
+    return (
+      <div className="py-12">
+        <OfflineState
+          onRetry={() => {
+            setLoading(true);
+            setReloadCounter((prev) => prev + 1);
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -104,7 +145,10 @@ export default function AuditLogsPage() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => fetchLogs(page)}
+          onClick={() => {
+            setLoading(true);
+            setReloadCounter((prev) => prev + 1);
+          }}
           disabled={loading}
           className="h-9"
         >
@@ -122,24 +166,32 @@ export default function AuditLogsPage() {
               placeholder="Filter current view by admin name, action, target entity, or details payload..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 h-9 text-xs"
+              className="pl-9 pr-9 h-9 text-xs"
             />
+            {search && (
+              <button
+                type="button"
+                onClick={handleClearSearch}
+                aria-label="Clear search"
+                className="absolute right-2.5 top-2.5 rounded-full p-0.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </CardContent>
       </Card>
 
       {/* Error state */}
       {error && (
-        <div className="p-4 rounded-xl border border-rose-200 bg-rose-50 text-rose-800 text-sm flex items-start gap-3">
-          <AlertCircle className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="font-semibold">Unable to fetch audit logs</p>
-            <p className="text-xs text-rose-700 mt-0.5">{error}</p>
-          </div>
-          <Button size="sm" variant="outline" onClick={() => fetchLogs(page)}>
-            Retry
-          </Button>
-        </div>
+        <ErrorState
+          title="Unable to fetch audit logs"
+          message={error}
+          onRetry={() => {
+            setLoading(true);
+            setReloadCounter((prev) => prev + 1);
+          }}
+        />
       )}
 
       {/* Audit Log Table */}
@@ -148,7 +200,7 @@ export default function AuditLogsPage() {
           <div>
             <CardTitle className="text-base">Administrative Actions</CardTitle>
             <CardDescription>
-              Page {meta.page} of {meta.totalPages || 1} • Total {meta.total} server audit events recorded
+              Showing {filteredLogs.length} of {meta.total} server audit events recorded (Page {meta.page} of {meta.totalPages || 1})
             </CardDescription>
           </div>
         </CardHeader>
@@ -174,8 +226,18 @@ export default function AuditLogsPage() {
                 </tr>
               ) : filteredLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-12 text-slate-500 font-sans">
-                    No administrative audit logs found.
+                  <td colSpan={6} className="py-8 font-sans">
+                    <EmptyState
+                      icon={History}
+                      title="No Audit Logs Found"
+                      description={
+                        search
+                          ? `No logs match "${search}". Try searching with a different keyword.`
+                          : "No administrative audit events have been recorded yet."
+                      }
+                      actionLabel={search ? "Clear Search" : undefined}
+                      onAction={search ? handleClearSearch : undefined}
+                    />
                   </td>
                 </tr>
               ) : (
@@ -218,24 +280,23 @@ export default function AuditLogsPage() {
                           {typeof log.details === "object"
                             ? Object.entries(log.details)
                                 .map(([k, v]) => `${k}: ${v}`)
-                                .join(", ")
+                                .join(" | ")
                             : String(log.details)}
                         </span>
                       ) : (
-                        <span className="text-slate-400 text-xs">-</span>
+                        <span className="text-slate-400 italic text-[11px]">No extra details</span>
                       )}
                     </td>
 
-                    {/* Inspect Details */}
+                    {/* Inspect Modal Trigger */}
                     <td className="px-5 py-3 text-right font-sans">
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-8 text-xs"
+                        className="h-7 text-xs"
                         onClick={() => setSelectedLog(log)}
                       >
-                        <Eye className="h-3.5 w-3.5 mr-1" />
-                        Payload
+                        Details
                       </Button>
                     </td>
                   </tr>
@@ -245,35 +306,20 @@ export default function AuditLogsPage() {
           </table>
         </CardContent>
 
-        {/* Pagination Controls */}
-        <div className="p-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
-          <span>
-            Showing page {meta.page} of {meta.totalPages || 1}
-          </span>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={meta.page <= 1 || loading}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              <ChevronLeft className="h-4 w-4 mr-1" />
-              Previous
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!meta.hasNextPage && meta.page >= meta.totalPages || loading}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Next
-              <ChevronRight className="h-4 w-4 ml-1" />
-            </Button>
-          </div>
+        {/* Enterprise Reusable Pagination */}
+        <div className="border-t border-slate-100 p-2">
+          <Pagination
+            page={page}
+            totalPages={meta.totalPages}
+            total={meta.total}
+            limit={limit}
+            onPageChange={handlePageChange}
+            onLimitChange={handleLimitChange}
+          />
         </div>
       </Card>
 
-      {/* Inspect Log Modal */}
+      {/* Inspect Log Dialog */}
       {selectedLog && (
         <Dialog open={!!selectedLog} onOpenChange={() => setSelectedLog(null)}>
           <DialogHeader onClose={() => setSelectedLog(null)}>

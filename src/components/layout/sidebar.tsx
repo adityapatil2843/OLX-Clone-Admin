@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
@@ -17,9 +18,8 @@ import {
   Megaphone,
   History,
   Settings,
-  ChevronLeft,
-  ChevronRight,
-  Sparkles,
+  ArrowLeft,
+  ArrowRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAdminMetrics } from "@/features/admin/hooks";
@@ -82,20 +82,27 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           <Link
             href="/"
             className={cn(
-              "flex items-center gap-2.5 transition-all overflow-hidden",
+              "flex items-center gap-3 transition-all overflow-hidden",
               collapsed ? "justify-center w-full" : ""
             )}
           >
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-sky-600 via-sky-500 to-indigo-600 text-white shadow-md shadow-sky-500/20">
-              <Sparkles className="h-5 w-5" />
+            <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-white shadow-xs border border-slate-100 flex items-center justify-center p-0.5">
+              <Image
+                src="/logo-1.png"
+                alt="Bazarr360 Logo"
+                width={40}
+                height={40}
+                className="h-full w-full object-contain"
+                priority
+              />
             </div>
             {!collapsed && (
-              <div className="flex flex-col">
-                <span className="text-base font-bold tracking-tight text-slate-900 leading-none">
-                  Bharat<span className="text-sky-600">Bazaar</span>
+              <div className="flex flex-col min-w-0">
+                <span className="text-base font-bold tracking-tight text-slate-900 leading-none truncate">
+                  Bazarr<span className="text-sky-600">360</span>
                 </span>
-                <span className="text-[10px] font-semibold tracking-wider text-slate-600 uppercase mt-1">
-                  Video Admin Console
+                <span className="text-[10px] font-semibold tracking-wider text-slate-500 uppercase mt-1 truncate">
+                  Admin Console
                 </span>
               </div>
             )}
@@ -164,21 +171,23 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         </div>
       </div>
 
-      {/* Collapse Toggle Footer */}
+      {/* Collapse Toggle Footer with Lucide Arrow */}
       <div className="p-3 border-t border-slate-100">
         <button
+          type="button"
           onClick={onToggle}
           className={cn(
-            "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-colors",
+            "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors cursor-pointer border border-transparent hover:border-slate-200",
             collapsed && "justify-center px-0"
           )}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={collapsed ? "Expand sidebar (Arrow Right)" : "Collapse sidebar (Arrow Left)"}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {collapsed ? (
-            <ChevronRight className="h-4 w-4" />
+            <ArrowRight className="h-4 w-4 text-slate-600 hover:text-slate-900 transition-transform" />
           ) : (
             <>
-              <ChevronLeft className="h-4 w-4" />
+              <ArrowLeft className="h-4 w-4 text-slate-600 hover:text-slate-900 transition-transform" />
               <span>Collapse Sidebar</span>
             </>
           )}

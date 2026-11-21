@@ -1,29 +1,32 @@
 "use client";
 
 import * as React from "react";
-import { ServerReel, ServerCategory } from "@/features/admin/types";
-import { adminApi } from "@/features/admin/api";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import type { ServerReel, ModerateReelStatus } from "@/features/reels/types";
+import type { ServerCategory } from "@/features/categories/types";
+import { reelsApi } from "@/features/reels/api";
+import { categoriesApi } from "@/features/categories/api";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Pagination } from "@/components/ui/pagination";
+import { ErrorState } from "@/components/ui/error-state";
+import { OfflineState } from "@/components/ui/offline-state";
+import { EmptyState } from "@/components/ui/empty-state";
+import { useNetworkStatus } from "@/hooks";
 import {
   Film,
   Play,
-  AlertTriangle,
-  CheckCircle2,
   RefreshCw,
   ShoppingBag,
-  Volume2,
-  Clock,
-  Archive,
 } from "lucide-react";
 import { formatRelativeTime } from "@/lib/utils";
 import { toast } from "sonner";
 
 export default function ReelsModerationPage() {
+  const isOnline = useNetworkStatus();
   const [reels, setReels] = React.useState<ServerReel[]>([]);
   const [categories, setCategories] = React.useState<ServerCategory[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -32,6 +35,7 @@ export default function ReelsModerationPage() {
   const [categoryFilter, setCategoryFilter] = React.useState("all");
   const [statusFilter, setStatusFilter] = React.useState("all");
   const [page, setPage] = React.useState(1);
+  const [limit, setLimit] = React.useState(12);
   const [meta, setMeta] = React.useState({ page: 1, limit: 12, total: 0, totalPages: 1 });
 
   const [previewReel, setPreviewReel] = React.useState<ServerReel | null>(null);
@@ -40,7 +44,7 @@ export default function ReelsModerationPage() {
   const [actionModal, setActionModal] = React.useState<{
     open: boolean;
     reel: ServerReel | null;
-    status: "PUBLISHED" | "DRAFT" | "PROCESSING" | "FAILED" | "ARCHIVED";
+    status: ModerateReelStatus;
     reason: string;
   }>({
     open: false,
@@ -50,37 +54,45 @@ export default function ReelsModerationPage() {
   });
 
   const [submitting, setSubmitting] = React.useState(false);
+  const [reloadCounter, setReloadCounter] = React.useState(0);
 
   // Load categories
   React.useEffect(() => {
-    adminApi.listCategories(false)
+    categoriesApi
+      .list(false)
       .then((cats) => setCategories(cats))
       .catch(() => {});
   }, []);
 
-  const loadReels = React.useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await adminApi.listReels({
+  // Race-condition immune data fetch
+  React.useEffect(() => {
+    let isCurrent = true;
+
+    reelsApi
+      .list({
         categoryId: categoryFilter !== "all" ? categoryFilter : undefined,
         page,
-        limit: 12,
+        limit,
+      })
+      .then((response) => {
+        if (!isCurrent) return;
+        setReels(response.data);
+        if (response.meta) {
+          setMeta(response.meta);
+        }
+        setError(null);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (!isCurrent) return;
+        setError(err instanceof Error ? err.message : "Failed to load reels from backend");
+        setLoading(false);
       });
-      setReels(response.data);
-      if (response.meta) {
-        setMeta(response.meta);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load reels from backend");
-    } finally {
-      setLoading(false);
-    }
-  }, [categoryFilter, page]);
 
-  React.useEffect(() => {
-    void loadReels();
-  }, [loadReels]);
+    return () => {
+      isCurrent = false;
+    };
+  }, [categoryFilter, page, limit, reloadCounter]);
 
   const displayedReels = React.useMemo(() => {
     return reels.filter((r) => {
@@ -89,17 +101,41 @@ export default function ReelsModerationPage() {
     });
   }, [reels, statusFilter]);
 
+  const handleCategoryChange = (val: string) => {
+    setCategoryFilter(val);
+    setPage(1);
+    setLoading(true);
+  };
+
+  const handleStatusChange = (val: string) => {
+    setStatusFilter(val);
+    setPage(1);
+    setLoading(true);
+  };
+
+  const handlePageChange = (newPage: number) => {
+    setLoading(true);
+    setPage(newPage);
+  };
+
+  const handleLimitChange = (newLimit: number) => {
+    setLoading(true);
+    setLimit(newLimit);
+    setPage(1);
+  };
+
   const handleExecuteAction = async () => {
     if (!actionModal.reel) return;
     const { reel, status, reason } = actionModal;
 
     setSubmitting(true);
     try {
-      await adminApi.moderateReel(reel.id, status, reason.trim() || undefined);
+      await reelsApi.moderate(reel.id, status, reason.trim() || undefined);
       toast.success(`Reel visibility updated to ${status}`);
       setActionModal((prev) => ({ ...prev, open: false, reason: "" }));
       if (previewReel?.id === reel.id) setPreviewReel(null);
-      await loadReels();
+      setLoading(true);
+      setReloadCounter((prev) => prev + 1);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to moderate reel");
     } finally {
@@ -122,6 +158,19 @@ export default function ReelsModerationPage() {
     }
   };
 
+  if (!isOnline) {
+    return (
+      <div className="py-12">
+        <OfflineState
+          onRetry={() => {
+            setLoading(true);
+            setReloadCounter((prev) => prev + 1);
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -139,7 +188,10 @@ export default function ReelsModerationPage() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => void loadReels()}
+          onClick={() => {
+            setLoading(true);
+            setReloadCounter((prev) => prev + 1);
+          }}
           disabled={loading}
           className="text-xs h-9 shrink-0"
         >
@@ -149,14 +201,14 @@ export default function ReelsModerationPage() {
       </div>
 
       {error && (
-        <Card className="border-rose-200 bg-rose-50 text-rose-900">
-          <CardContent className="py-3 text-xs flex items-center justify-between">
-            <span>Error fetching reels: {error}</span>
-            <Button size="sm" variant="outline" onClick={() => void loadReels()} className="h-7 text-xs bg-white">
-              Retry
-            </Button>
-          </CardContent>
-        </Card>
+        <ErrorState
+          title="Error fetching reels"
+          message={error}
+          onRetry={() => {
+            setLoading(true);
+            setReloadCounter((prev) => prev + 1);
+          }}
+        />
       )}
 
       {/* Filter Toolbar */}
@@ -164,10 +216,7 @@ export default function ReelsModerationPage() {
         <CardContent className="p-4 flex flex-col sm:flex-row items-center gap-3">
           <Select
             value={categoryFilter}
-            onChange={(e) => {
-              setCategoryFilter(e.target.value);
-              setPage(1);
-            }}
+            onChange={(e) => handleCategoryChange(e.target.value)}
             className="w-full sm:w-48 text-xs h-9"
           >
             <option value="all">All Categories</option>
@@ -180,7 +229,7 @@ export default function ReelsModerationPage() {
 
           <Select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) => handleStatusChange(e.target.value)}
             className="w-full sm:w-48 text-xs h-9"
           >
             <option value="all">All Visibility States</option>
@@ -201,19 +250,16 @@ export default function ReelsModerationPage() {
           </div>
         </div>
       ) : displayedReels.length === 0 ? (
-        <Card>
-          <CardContent className="py-16 text-center text-xs text-slate-500">
-            No video reels found matching your filter criteria.
-          </CardContent>
-        </Card>
+        <div className="py-8">
+          <EmptyState
+            icon={Film}
+            title="No Reels Found"
+            description="No video reels match the selected category or visibility filters."
+          />
+        </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {displayedReels.map((reel) => {
-            const videoUrl =
-              reel.mediaAsset?.storageKey && reel.mediaAsset.storageKey.startsWith("http")
-                ? reel.mediaAsset.storageKey
-                : `https://res.cloudinary.com/demo/video/upload/${reel.mediaAsset?.storageKey || ""}`;
-
             return (
               <Card
                 key={reel.id}
@@ -250,38 +296,46 @@ export default function ReelsModerationPage() {
                           {reel.creator?.name || "Creator"}
                         </span>
                       </div>
-                      <p className="text-xs font-medium text-white line-clamp-2 leading-snug">
+                      <p className="text-xs line-clamp-2 text-slate-200 leading-tight">
                         {reel.caption || "No caption provided"}
                       </p>
                     </div>
                   </div>
 
-                  {/* Metadata */}
-                  <div className="p-3 text-xs space-y-1.5 text-slate-600">
-                    <div className="flex items-center justify-between text-[11px] text-slate-400">
-                      <span>Category: {reel.category?.name || "General"}</span>
+                  {/* Reel Details Body */}
+                  <div className="p-3.5 space-y-2 text-xs">
+                    <div className="flex items-center justify-between text-slate-500 text-[11px]">
+                      <span>{reel.category?.name || "Uncategorized"}</span>
                       <span>{formatRelativeTime(reel.createdAt)}</span>
                     </div>
-                    <span className="text-[10px] text-slate-400 block font-mono">
-                      ID: {reel.id}
-                    </span>
+
+                    {/* Tagged Products */}
+                    {reel.taggedProducts && reel.taggedProducts.length > 0 && (
+                      <div className="pt-2 border-t border-slate-100 flex items-center gap-1.5 text-slate-600">
+                        <ShoppingBag className="h-3.5 w-3.5 text-emerald-600" />
+                        <span className="truncate">
+                          {reel.taggedProducts[0]?.listing?.title || "Tagged Product"}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 {/* Moderation Controls Footer */}
-                <div className="p-3 pt-0 border-t border-slate-100 flex items-center justify-between gap-2 mt-2">
+                <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center gap-2">
                   <Button
-                    variant="outline"
                     size="sm"
+                    variant="outline"
                     className="text-xs h-8 flex-1"
                     onClick={() => setPreviewReel(reel)}
                   >
-                    Inspect
+                    Review
                   </Button>
+
                   {reel.visibilityState === "PUBLISHED" ? (
                     <Button
-                      variant="destructive"
                       size="sm"
+                      variant="destructive"
                       className="text-xs h-8 flex-1"
                       onClick={() =>
                         setActionModal({
@@ -292,13 +346,12 @@ export default function ReelsModerationPage() {
                         })
                       }
                     >
-                      Take Down
+                      Archive
                     </Button>
                   ) : (
                     <Button
-                      variant="success"
                       size="sm"
-                      className="text-xs h-8 flex-1"
+                      className="text-xs h-8 flex-1 bg-emerald-600 hover:bg-emerald-500 text-white"
                       onClick={() =>
                         setActionModal({
                           open: true,
@@ -319,31 +372,17 @@ export default function ReelsModerationPage() {
       )}
 
       {/* Pagination Footer */}
-      {meta.totalPages > 1 && (
-        <div className="flex items-center justify-between p-4 border-t border-slate-200 text-xs text-slate-500">
-          <span>Page {meta.page} of {meta.totalPages} ({meta.total} total reels)</span>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={page <= 1 || loading}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="h-8 text-xs"
-            >
-              Previous
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={page >= meta.totalPages || loading}
-              onClick={() => setPage((p) => p + 1)}
-              className="h-8 text-xs"
-            >
-              Next
-            </Button>
-          </div>
-        </div>
-      )}
+      <Card className="p-2">
+        <Pagination
+          page={page}
+          totalPages={meta.totalPages}
+          total={meta.total}
+          limit={limit}
+          pageSizeOptions={[12, 24, 48]}
+          onPageChange={handlePageChange}
+          onLimitChange={handleLimitChange}
+        />
+      </Card>
 
       {/* Video Preview & Review Modal */}
       {previewReel && (
@@ -356,7 +395,6 @@ export default function ReelsModerationPage() {
           </DialogHeader>
 
           <div className="py-3 space-y-3 text-xs">
-            {/* Caption */}
             {previewReel.caption && (
               <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-100 text-slate-800">
                 <span className="font-semibold block text-slate-500 text-[10px] uppercase mb-0.5">Caption</span>
@@ -364,7 +402,6 @@ export default function ReelsModerationPage() {
               </div>
             )}
 
-            {/* Media Information */}
             <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-100 space-y-1">
               <span className="font-semibold block text-slate-500 text-[10px] uppercase">Media Storage</span>
               <p className="font-mono text-[11px] truncate text-slate-700">
@@ -378,8 +415,9 @@ export default function ReelsModerationPage() {
 
           <DialogFooter className="flex flex-wrap justify-between items-center gap-2 w-full">
             <Button
-              variant={previewReel.visibilityState === "PUBLISHED" ? "destructive" : "success"}
+              variant={previewReel.visibilityState === "PUBLISHED" ? "destructive" : "default"}
               size="sm"
+              className={previewReel.visibilityState !== "PUBLISHED" ? "bg-emerald-600 hover:bg-emerald-500 text-white" : ""}
               onClick={() => {
                 setActionModal({
                   open: true,
@@ -416,6 +454,21 @@ export default function ReelsModerationPage() {
           <div className="py-3 space-y-3 text-xs">
             <div>
               <label className="text-xs font-semibold text-slate-700 block mb-1">
+                Moderation Status
+              </label>
+              <Select
+                value={actionModal.status}
+                onChange={(e) => setActionModal((prev) => ({ ...prev, status: e.target.value as ModerateReelStatus }))}
+                className="h-9 text-xs w-full"
+              >
+                <option value="PUBLISHED">PUBLISHED (Approve & Distribute)</option>
+                <option value="MODERATED">MODERATED (Under Review / Flagged)</option>
+                <option value="DRAFT">DRAFT (Revert to Draft)</option>
+                <option value="ARCHIVED">ARCHIVED (Take Down / Archive)</option>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-700 block mb-1">
                 Moderation Reason (Optional, logged to Audit Trail)
               </label>
               <Input
@@ -440,6 +493,7 @@ export default function ReelsModerationPage() {
               variant={actionModal.status === "ARCHIVED" ? "destructive" : "default"}
               size="sm"
               disabled={submitting}
+              className={actionModal.status !== "ARCHIVED" ? "bg-emerald-600 hover:bg-emerald-500 text-white" : ""}
               onClick={handleExecuteAction}
             >
               {submitting ? "Processing..." : "Confirm Action"}

@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "BharatBazaar Admin - Video-First Marketplace Console",
+  title: "Bazarr360 Admin - Video-First Marketplace Console",
   description: "Enterprise administration dashboard for video-first commerce, reel moderation, and seller verification across India.",
 };
 

@@ -52,7 +52,7 @@ export function Header({ onOpenMobileMenu }: HeaderProps) {
             href="/"
             className="hover:text-slate-900 font-medium transition-colors"
           >
-            BharatBazaar
+            Bazarr360
           </Link>
           <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
           <span className="font-semibold text-slate-900">{breadcrumbTitle}</span>

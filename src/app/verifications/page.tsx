@@ -1,14 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   ShieldAlert,
   AlertTriangle,
-  FileText,
   Database,
-  ArrowRight,
   Server,
 } from "lucide-react";
 

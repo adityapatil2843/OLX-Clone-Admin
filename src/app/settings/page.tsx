@@ -11,15 +11,9 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Settings,
-  User,
   Shield,
-  Sliders,
-  Bell,
   Save,
   Key,
-  CheckCircle2,
-  Lock,
-  Smartphone,
   AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -59,15 +53,34 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-          <Settings className="h-6 w-6 text-sky-600" />
-          Settings & Platform Preferences
-        </h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Configure admin credentials, video ingestion constraints, AI safety thresholds, and marketplace operational policies.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+            <Settings className="h-6 w-6 text-sky-600" />
+            Settings & Platform Preferences
+          </h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Configure admin credentials, video ingestion constraints, AI safety thresholds, and marketplace operational policies.
+          </p>
+        </div>
+
+        <Badge variant="warning" className="w-fit text-xs px-3 py-1 font-semibold">
+          Demo Mode: Backend API Missing
+        </Badge>
       </div>
+
+      {/* Blocker & Unsupported Capability Notice */}
+      <Card className="border-amber-200 bg-amber-50/40">
+        <CardHeader>
+          <div className="flex items-center gap-2 text-amber-900 font-semibold text-base">
+            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
+            Platform Preferences - Demonstration Mode Only
+          </div>
+          <CardDescription className="text-amber-800 text-xs mt-1 leading-relaxed">
+            Settings persistence endpoints are not implemented on the server. Values displayed below are client-side demonstration parameters only and do not alter production database configurations.
+          </CardDescription>
+        </CardHeader>
+      </Card>
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -142,7 +155,7 @@ export default function SettingsPage() {
                       onChange={(e) =>
                         setPlatformSettings({
                           ...platformSettings,
-                          aiAutoModerationSensitivity: e.target.value as any,
+                          aiAutoModerationSensitivity: e.target.value as PlatformSettings["aiAutoModerationSensitivity"],
                         })
                       }
                     >

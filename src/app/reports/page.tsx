@@ -1,36 +1,38 @@
 "use client";
 
 import * as React from "react";
-import { AdminReport, AdminReportStatus } from "@/features/admin/types";
-import { adminApi } from "@/features/admin/api";
+import type { AdminReport, AdminReportStatus } from "@/features/reports/types";
+import { reportsApi } from "@/features/reports/api";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Pagination } from "@/components/ui/pagination";
+import { ErrorState } from "@/components/ui/error-state";
+import { OfflineState } from "@/components/ui/offline-state";
+import { EmptyState } from "@/components/ui/empty-state";
+import { useNetworkStatus } from "@/hooks";
 import {
   AlertOctagon,
-  Search,
-  CheckCircle2,
-  AlertTriangle,
   User,
   ShoppingBag,
   Film,
   ShieldAlert,
   RefreshCw,
-  Clock,
 } from "lucide-react";
 import { formatDate, formatRelativeTime } from "@/lib/utils";
 import { toast } from "sonner";
 
 export default function ReportsQueuePage() {
+  const isOnline = useNetworkStatus();
   const [reports, setReports] = React.useState<AdminReport[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
   const [statusFilter, setStatusFilter] = React.useState<string>("PENDING");
   const [page, setPage] = React.useState(1);
+  const [limit, setLimit] = React.useState(20);
   const [meta, setMeta] = React.useState({ page: 1, limit: 20, total: 0, totalPages: 1 });
 
   const [selectedReport, setSelectedReport] = React.useState<AdminReport | null>(null);
@@ -49,26 +51,50 @@ export default function ReportsQueuePage() {
   });
 
   const [submitting, setSubmitting] = React.useState(false);
+  const [reloadCounter, setReloadCounter] = React.useState(0);
 
-  const loadReports = React.useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await adminApi.listReports(page, 20, statusFilter !== "all" ? statusFilter : undefined);
-      setReports(response.data);
-      if (response.meta) {
-        setMeta(response.meta);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load reports from backend");
-    } finally {
-      setLoading(false);
-    }
-  }, [page, statusFilter]);
-
+  // Race-condition immune load
   React.useEffect(() => {
-    void loadReports();
-  }, [loadReports]);
+    let isCurrent = true;
+
+    reportsApi
+      .list(page, limit, statusFilter !== "all" ? statusFilter : undefined)
+      .then((response) => {
+        if (!isCurrent) return;
+        setReports(response.data);
+        if (response.meta) {
+          setMeta(response.meta);
+        }
+        setError(null);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (!isCurrent) return;
+        setError(err instanceof Error ? err.message : "Failed to load reports from backend");
+        setLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [page, limit, statusFilter, reloadCounter]);
+
+  const handleStatusChange = (val: string) => {
+    setStatusFilter(val);
+    setPage(1);
+    setLoading(true);
+  };
+
+  const handlePageChange = (newPage: number) => {
+    setLoading(true);
+    setPage(newPage);
+  };
+
+  const handleLimitChange = (newLimit: number) => {
+    setLoading(true);
+    setLimit(newLimit);
+    setPage(1);
+  };
 
   const handleExecuteResolution = async () => {
     if (!resolveDialog.report) return;
@@ -76,11 +102,12 @@ export default function ReportsQueuePage() {
 
     setSubmitting(true);
     try {
-      await adminApi.resolveReport(report.id, status, resolutionNotes.trim() || undefined);
+      await reportsApi.resolve(report.id, status, resolutionNotes.trim() || undefined);
       toast.success(`Report #${report.id} marked as ${status}`);
       setResolveDialog((prev) => ({ ...prev, open: false, resolutionNotes: "" }));
       if (selectedReport?.id === report.id) setSelectedReport(null);
-      await loadReports();
+      setLoading(true);
+      setReloadCounter((prev) => prev + 1);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to resolve report");
     } finally {
@@ -102,9 +129,9 @@ export default function ReportsQueuePage() {
   const getStatusBadge = (status: AdminReportStatus) => {
     switch (status) {
       case "PENDING":
-        return <Badge variant="destructive">PENDING</Badge>;
+        return <Badge variant="warning">PENDING</Badge>;
       case "REVIEWED":
-        return <Badge variant="warning">REVIEWED</Badge>;
+        return <Badge variant="default">REVIEWED</Badge>;
       case "RESOLVED":
         return <Badge variant="success">RESOLVED</Badge>;
       case "DISMISSED":
@@ -112,80 +139,96 @@ export default function ReportsQueuePage() {
     }
   };
 
+  if (!isOnline) {
+    return (
+      <div className="py-12">
+        <OfflineState
+          onRetry={() => {
+            setLoading(true);
+            setReloadCounter((prev) => prev + 1);
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Page Title */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-            <AlertOctagon className="h-6 w-6 text-rose-600" />
-            Trust & Safety Reports Queue
+          <div className="flex items-center gap-2">
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-rose-100 text-rose-600">
+              <ShieldAlert className="h-3.5 w-3.5" />
+            </span>
+            <span className="text-xs font-semibold text-rose-600 uppercase tracking-wider">
+              Enforcement & Trust
+            </span>
+          </div>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
+            Reports & Moderation Queue
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Authoritative moderation inbox. Review user-submitted complaints for scams, policy violations, and harassment.
+            Complaints submitted by users against listings, reels, or bad actors. Real-time moderation actions recorded to the database.
           </p>
         </div>
-
         <Button
           variant="outline"
           size="sm"
-          onClick={() => void loadReports()}
+          onClick={() => {
+            setLoading(true);
+            setReloadCounter((prev) => prev + 1);
+          }}
           disabled={loading}
           className="text-xs h-9 shrink-0"
         >
           <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
-          Refresh
+          Refresh Queue
         </Button>
       </div>
 
       {error && (
-        <Card className="border-rose-200 bg-rose-50 text-rose-900">
-          <CardContent className="py-3 text-xs flex items-center justify-between">
-            <span>Error fetching reports: {error}</span>
-            <Button size="sm" variant="outline" onClick={() => void loadReports()} className="h-7 text-xs bg-white">
-              Retry
-            </Button>
-          </CardContent>
-        </Card>
+        <ErrorState
+          title="Error fetching reports"
+          message={error}
+          onRetry={() => {
+            setLoading(true);
+            setReloadCounter((prev) => prev + 1);
+          }}
+        />
       )}
 
-      {/* Filter Toolbar */}
+      {/* Filter Bar */}
       <Card>
-        <CardContent className="p-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-slate-500">Status Filter:</span>
-            <div className="flex flex-wrap gap-1.5">
-              {(["PENDING", "REVIEWED", "RESOLVED", "DISMISSED", "all"] as const).map((st) => (
-                <button
-                  key={st}
-                  type="button"
-                  onClick={() => {
-                    setStatusFilter(st);
-                    setPage(1);
-                  }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-                    statusFilter === st
-                      ? "bg-slate-900 text-white border-transparent shadow-xs"
-                      : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-                  }`}
-                >
-                  {st}
-                </button>
-              ))}
-            </div>
+        <CardContent className="p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <span className="text-xs font-semibold text-slate-600 shrink-0">Filter Status:</span>
+            <Select
+              value={statusFilter}
+              onChange={(e) => handleStatusChange(e.target.value)}
+              className="text-xs h-9 w-full sm:w-44"
+            >
+              <option value="all">All Complaints</option>
+              <option value="PENDING">Pending Triage</option>
+              <option value="REVIEWED">Under Review</option>
+              <option value="RESOLVED">Resolved</option>
+              <option value="DISMISSED">Dismissed</option>
+            </Select>
           </div>
+
+          <span className="text-xs text-slate-400">
+            Total complaints: <strong className="text-slate-800">{meta.total}</strong>
+          </span>
         </CardContent>
       </Card>
 
       {/* Reports Table */}
       <Card>
-        <CardHeader className="pb-3 border-b border-slate-100 flex flex-row items-center justify-between">
-          <div>
-            <CardTitle className="text-base">Moderation Queue Items</CardTitle>
-            <CardDescription>
-              Showing {reports.length} of {meta.total} records (Page {meta.page} of {meta.totalPages || 1})
-            </CardDescription>
-          </div>
+        <CardHeader className="pb-3 border-b border-slate-100">
+          <CardTitle className="text-base">Complaints Inbox</CardTitle>
+          <CardDescription>
+            Showing {reports.length} of {meta.total} cases (Page {meta.page} of {meta.totalPages || 1})
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0 overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-600">
@@ -193,10 +236,10 @@ export default function ReportsQueuePage() {
               <tr>
                 <th className="px-5 py-3 font-semibold">Target Entity</th>
                 <th className="px-5 py-3 font-semibold">Violation Reason</th>
-                <th className="px-5 py-3 font-semibold">Filed By</th>
-                <th className="px-5 py-3 font-semibold">Submitted</th>
+                <th className="px-5 py-3 font-semibold">Reported By</th>
                 <th className="px-5 py-3 font-semibold">Status</th>
-                <th className="px-5 py-3 font-semibold text-right">Action</th>
+                <th className="px-5 py-3 font-semibold">Submitted</th>
+                <th className="px-5 py-3 font-semibold text-right">Triage Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium">
@@ -205,57 +248,86 @@ export default function ReportsQueuePage() {
                   <td colSpan={6} className="text-center py-12 text-slate-500">
                     <div className="flex items-center justify-center gap-2">
                       <div className="h-4 w-4 animate-spin rounded-full border-2 border-sky-600 border-t-transparent" />
-                      <span>Loading reports from backend...</span>
+                      <span>Loading reports queue from server...</span>
                     </div>
                   </td>
                 </tr>
               ) : reports.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-12 text-slate-500">
-                    No reports found for status &quot;{statusFilter}&quot;.
+                  <td colSpan={6} className="py-8">
+                    <EmptyState
+                      icon={AlertOctagon}
+                      title="Queue Clean"
+                      description={
+                        statusFilter === "PENDING"
+                          ? "No pending reports require moderation attention right now."
+                          : "No complaints found under the selected status filter."
+                      }
+                    />
                   </td>
                 </tr>
               ) : (
                 reports.map((report) => (
                   <tr key={report.id} className="hover:bg-slate-50/70 transition-colors">
-                    {/* Target */}
+                    {/* Target Entity */}
                     <td className="px-5 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="h-7 w-7 rounded-md bg-slate-100 border border-slate-200 flex items-center justify-center">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2 rounded-lg bg-slate-100 border border-slate-200 shrink-0">
                           {getTargetIcon(report.targetType)}
                         </div>
                         <div>
-                          <span className="font-semibold text-slate-900 block">{report.targetType}</span>
-                          <span className="text-[10px] text-slate-400 font-mono block">ID: {report.targetId}</span>
+                          <span className="font-semibold text-slate-900 block">
+                            {report.targetType}
+                          </span>
+                          <span className="text-[11px] text-slate-400 font-mono block">
+                            ID: {report.targetId.slice(0, 10)}...
+                          </span>
                         </div>
                       </div>
                     </td>
 
-                    {/* Violation Reason */}
-                    <td className="px-5 py-3 max-w-xs">
-                      <span className="font-semibold text-rose-600 block line-clamp-1">{report.reason}</span>
-                      {report.details && (
-                        <span className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">{report.details}</span>
-                      )}
+                    {/* Reason */}
+                    <td className="px-5 py-3">
+                      <div>
+                        <span className="font-semibold text-rose-700 block">
+                          {report.reason}
+                        </span>
+                        {report.details && (
+                          <span className="text-[11px] text-slate-400 block truncate max-w-xs" title={report.details}>
+                            {report.details}
+                          </span>
+                        )}
+                      </div>
                     </td>
 
                     {/* Reporter */}
                     <td className="px-5 py-3">
-                      <span className="text-slate-900 block font-semibold">{report.reporter?.name || "User"}</span>
-                      {report.reporter?.email && (
-                        <span className="text-[11px] text-slate-400 block">{report.reporter.email}</span>
-                      )}
-                    </td>
-
-                    {/* Submitted At */}
-                    <td className="px-5 py-3 text-slate-500 whitespace-nowrap">
-                      {formatRelativeTime(report.createdAt)}
+                      <div>
+                        <span className="text-slate-800 font-medium block">
+                          {report.reporter?.name || "User"}
+                        </span>
+                        <span className="text-[11px] text-slate-400 block font-mono">
+                          ID: {report.reporterId.slice(0, 8)}...
+                        </span>
+                      </div>
                     </td>
 
                     {/* Status */}
-                    <td className="px-5 py-3">{getStatusBadge(report.status)}</td>
+                    <td className="px-5 py-3">
+                      {getStatusBadge(report.status)}
+                    </td>
 
-                    {/* Action buttons */}
+                    {/* Date */}
+                    <td className="px-5 py-3 text-slate-500 whitespace-nowrap">
+                      <div>
+                        <span className="block">{formatRelativeTime(report.createdAt)}</span>
+                        <span className="text-[10px] text-slate-400 block">
+                          {formatDate(report.createdAt, "dd MMM yyyy, hh:mm a")}
+                        </span>
+                      </div>
+                    </td>
+
+                    {/* Actions */}
                     <td className="px-5 py-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         <Button
@@ -266,6 +338,7 @@ export default function ReportsQueuePage() {
                         >
                           Review
                         </Button>
+
                         {report.status === "PENDING" && (
                           <Button
                             size="sm"
@@ -292,32 +365,17 @@ export default function ReportsQueuePage() {
           </table>
         </CardContent>
 
-        {/* Pagination Footer */}
-        {meta.totalPages > 1 && (
-          <div className="flex items-center justify-between p-4 border-t border-slate-100 text-xs text-slate-500">
-            <span>Page {meta.page} of {meta.totalPages}</span>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={page <= 1 || loading}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="h-8 text-xs"
-              >
-                Previous
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={page >= meta.totalPages || loading}
-                onClick={() => setPage((p) => p + 1)}
-                className="h-8 text-xs"
-              >
-                Next
-              </Button>
-            </div>
-          </div>
-        )}
+        {/* Enterprise Reusable Pagination */}
+        <div className="border-t border-slate-100 p-2">
+          <Pagination
+            page={page}
+            totalPages={meta.totalPages}
+            total={meta.total}
+            limit={limit}
+            onPageChange={handlePageChange}
+            onLimitChange={handleLimitChange}
+          />
+        </div>
       </Card>
 
       {/* Report Review Dialog */}
@@ -380,36 +438,40 @@ export default function ReportsQueuePage() {
             )}
           </div>
 
-          <DialogFooter className="flex flex-wrap justify-between items-center gap-2 w-full">
+          <DialogFooter className="flex justify-between items-center w-full">
             <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setResolveDialog({
-                    open: true,
-                    report: selectedReport,
-                    status: "DISMISSED",
-                    resolutionNotes: "Dismissed by admin review: No violation found",
-                  });
-                }}
-              >
-                Dismiss Report
-              </Button>
-              <Button
-                variant="success"
-                size="sm"
-                onClick={() => {
-                  setResolveDialog({
-                    open: true,
-                    report: selectedReport,
-                    status: "RESOLVED",
-                    resolutionNotes: "Violation confirmed: Warning issued and content quarantined",
-                  });
-                }}
-              >
-                Resolve Report
-              </Button>
+              {selectedReport.status === "PENDING" && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="success"
+                    onClick={() => {
+                      setResolveDialog({
+                        open: true,
+                        report: selectedReport,
+                        status: "RESOLVED",
+                        resolutionNotes: "",
+                      });
+                    }}
+                  >
+                    Resolve Complaint
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setResolveDialog({
+                        open: true,
+                        report: selectedReport,
+                        status: "DISMISSED",
+                        resolutionNotes: "",
+                      });
+                    }}
+                  >
+                    Dismiss Complaint
+                  </Button>
+                </>
+              )}
             </div>
             <Button variant="outline" size="sm" onClick={() => setSelectedReport(null)}>
               Close
@@ -418,7 +480,7 @@ export default function ReportsQueuePage() {
         </Dialog>
       )}
 
-      {/* Resolution Confirmation Modal */}
+      {/* Resolution Dialog Modal */}
       {resolveDialog.open && (
         <Dialog
           open={resolveDialog.open}
@@ -426,23 +488,30 @@ export default function ReportsQueuePage() {
         >
           <DialogHeader onClose={() => setResolveDialog((prev) => ({ ...prev, open: false }))}>
             <DialogTitle>
-              {resolveDialog.status === "DISMISSED" ? "Dismiss Complaint?" : "Resolve Complaint?"}
+              {resolveDialog.status === "RESOLVED"
+                ? "Mark Complaint as Resolved"
+                : resolveDialog.status === "DISMISSED"
+                ? "Dismiss Complaint"
+                : "Move to Reviewed"}
             </DialogTitle>
             <DialogDescription>
-              Report #{resolveDialog.report?.id} ({resolveDialog.report?.targetType}: {resolveDialog.report?.targetId})
+              Report #{resolveDialog.report?.id} against {resolveDialog.report?.targetType}
             </DialogDescription>
           </DialogHeader>
 
           <div className="py-3 space-y-3 text-xs">
             <div>
               <label className="text-xs font-semibold text-slate-700 block mb-1">
-                Resolution Notes (Logged to Audit Trail)
+                Resolution Notes (Visible to internal staff)
               </label>
-              <Input
-                placeholder="e.g. Investigation completed, user warned per terms"
+              <textarea
+                rows={3}
+                placeholder="e.g. Content taken down per seller policy violation / Verified false report"
                 value={resolveDialog.resolutionNotes}
-                onChange={(e) => setResolveDialog((prev) => ({ ...prev, resolutionNotes: e.target.value }))}
-                className="h-9 text-xs"
+                onChange={(e) =>
+                  setResolveDialog((prev) => ({ ...prev, resolutionNotes: e.target.value }))
+                }
+                className="w-full rounded-lg border border-slate-200 p-2.5 text-xs placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
               />
             </div>
           </div>
@@ -457,12 +526,12 @@ export default function ReportsQueuePage() {
               Cancel
             </Button>
             <Button
-              variant={resolveDialog.status === "DISMISSED" ? "destructive" : "success"}
+              variant={resolveDialog.status === "DISMISSED" ? "outline" : "default"}
               size="sm"
               disabled={submitting}
               onClick={handleExecuteResolution}
             >
-              {submitting ? "Processing..." : `Confirm ${resolveDialog.status}`}
+              {submitting ? "Submitting..." : `Confirm ${resolveDialog.status}`}
             </Button>
           </DialogFooter>
         </Dialog>

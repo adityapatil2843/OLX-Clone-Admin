@@ -1,42 +1,45 @@
 "use client";
 
 import * as React from "react";
-import { ServerUser } from "@/features/admin/types";
-import { adminApi } from "@/features/admin/api";
+import type { ServerUser } from "@/features/users/types";
+import { usersApi } from "@/features/users/api";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { Pagination } from "@/components/ui/pagination";
+import { ErrorState } from "@/components/ui/error-state";
+import { OfflineState } from "@/components/ui/offline-state";
+import { EmptyState } from "@/components/ui/empty-state";
+import { useDebounce, useNetworkStatus } from "@/hooks";
 import {
   Search,
   CheckCircle2,
-  AlertCircle,
-  Shield,
-  Phone,
-  Mail,
-  MapPin,
-  Calendar,
   RefreshCw,
-  UserCheck,
-  UserX,
-  Trash2,
-  Clock,
+  X,
+  MapPin,
+  Users as UsersIcon,
 } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 
 export default function UsersPage() {
+  const isOnline = useNetworkStatus();
   const [users, setUsers] = React.useState<ServerUser[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
+  // Search & Filters
   const [search, setSearch] = React.useState("");
+  const debouncedSearch = useDebounce(search, 400);
   const [roleFilter, setRoleFilter] = React.useState<string>("all");
   const [statusFilter, setStatusFilter] = React.useState<string>("all");
+
+  // Pagination
   const [page, setPage] = React.useState(1);
+  const [limit, setLimit] = React.useState(20);
   const [meta, setMeta] = React.useState({ page: 1, limit: 20, total: 0, totalPages: 1 });
 
   const [selectedUser, setSelectedUser] = React.useState<ServerUser | null>(null);
@@ -57,29 +60,37 @@ export default function UsersPage() {
   });
 
   const [submitting, setSubmitting] = React.useState(false);
+  const [reloadCounter, setReloadCounter] = React.useState(0);
 
-  const loadUsers = React.useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await adminApi.listUsers({ search, page, limit: 20 });
-      setUsers(response.data);
-      if (response.meta) {
-        setMeta(response.meta);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load users from backend");
-    } finally {
-      setLoading(false);
-    }
-  }, [search, page]);
-
+  // Race-condition immune data fetch
   React.useEffect(() => {
-    const timer = setTimeout(() => {
-      void loadUsers();
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [loadUsers]);
+    let isCurrent = true;
+
+    usersApi
+      .list({
+        search: debouncedSearch.trim() || undefined,
+        page,
+        limit,
+      })
+      .then((response) => {
+        if (!isCurrent) return;
+        setUsers(response.data);
+        if (response.meta) {
+          setMeta(response.meta);
+        }
+        setError(null);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (!isCurrent) return;
+        setError(err instanceof Error ? err.message : "Failed to load users from backend");
+        setLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [debouncedSearch, page, limit, reloadCounter]);
 
   // Client-side quick filter for role/status
   const displayedUsers = React.useMemo(() => {
@@ -93,6 +104,35 @@ export default function UsersPage() {
     });
   }, [users, roleFilter, statusFilter]);
 
+  const handleSearchChange = (val: string) => {
+    setSearch(val);
+    setPage(1);
+    setLoading(true);
+  };
+
+  const handleRoleChange = (val: string) => {
+    setRoleFilter(val);
+    setPage(1);
+    setLoading(true);
+  };
+
+  const handleStatusChange = (val: string) => {
+    setStatusFilter(val);
+    setPage(1);
+    setLoading(true);
+  };
+
+  const handlePageChange = (newPage: number) => {
+    setLoading(true);
+    setPage(newPage);
+  };
+
+  const handleLimitChange = (newLimit: number) => {
+    setLoading(true);
+    setLimit(newLimit);
+    setPage(1);
+  };
+
   const handleExecuteModeration = async () => {
     if (!moderationDialog.user) return;
     const { user, action, targetRole, targetStatus, reason } = moderationDialog;
@@ -100,25 +140,45 @@ export default function UsersPage() {
     setSubmitting(true);
     try {
       if (action === "change_role" && targetRole) {
-        await adminApi.moderateUser(user.id, { role: targetRole, reason: reason.trim() || undefined });
+        await usersApi.moderate(user.id, { role: targetRole, reason: reason.trim() || undefined });
         toast.success(`Role updated for ${user.name} to ${targetRole}`);
       } else if (action === "toggle_status" && targetStatus !== undefined) {
-        await adminApi.moderateUser(user.id, { isActive: targetStatus, reason: reason.trim() || undefined });
+        await usersApi.moderate(user.id, { isActive: targetStatus, reason: reason.trim() || undefined });
         toast.success(`User ${user.name} ${targetStatus ? "activated" : "deactivated"}`);
       } else if (action === "delete") {
-        await adminApi.deleteUser(user.id);
+        await usersApi.delete(user.id);
         toast.success(`User ${user.name} soft-deleted successfully`);
       }
 
       setModerationDialog((prev) => ({ ...prev, open: false, reason: "" }));
       if (selectedUser?.id === user.id) setSelectedUser(null);
-      await loadUsers();
+      setLoading(true);
+      setReloadCounter((prev) => prev + 1);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Moderation action failed");
     } finally {
       setSubmitting(false);
     }
   };
+
+  const handleClearSearch = () => {
+    setSearch("");
+    setPage(1);
+    setLoading(true);
+  };
+
+  if (!isOnline) {
+    return (
+      <div className="py-12">
+        <OfflineState
+          onRetry={() => {
+            setLoading(true);
+            setReloadCounter((prev) => prev + 1);
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -135,7 +195,10 @@ export default function UsersPage() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => void loadUsers()}
+          onClick={() => {
+            setLoading(true);
+            setReloadCounter((prev) => prev + 1);
+          }}
           disabled={loading}
           className="text-xs h-9 shrink-0"
         >
@@ -145,14 +208,14 @@ export default function UsersPage() {
       </div>
 
       {error && (
-        <Card className="border-rose-200 bg-rose-50 text-rose-900">
-          <CardContent className="py-3 text-xs flex items-center justify-between">
-            <span>Error fetching users: {error}</span>
-            <Button size="sm" variant="outline" onClick={() => void loadUsers()} className="h-7 text-xs bg-white">
-              Retry
-            </Button>
-          </CardContent>
-        </Card>
+        <ErrorState
+          title="Error fetching user records"
+          message={error}
+          onRetry={() => {
+            setLoading(true);
+            setReloadCounter((prev) => prev + 1);
+          }}
+        />
       )}
 
       {/* Filter Toolbar */}
@@ -161,20 +224,27 @@ export default function UsersPage() {
           <div className="relative w-full md:flex-1">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
             <Input
-              placeholder="Search by name or city..."
+              placeholder="Search by name, email or city... (Press enter or type)"
               value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
-              className="pl-9 h-9 text-xs"
+              onChange={(e) => handleSearchChange(e.target.value)}
+              className="pl-9 pr-9 h-9 text-xs"
             />
+            {search && (
+              <button
+                type="button"
+                onClick={handleClearSearch}
+                aria-label="Clear search"
+                className="absolute right-2.5 top-2.5 rounded-full p-0.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
 
           <div className="flex w-full md:w-auto items-center gap-2">
             <Select
               value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value)}
+              onChange={(e) => handleRoleChange(e.target.value)}
               className="w-full md:w-36 text-xs h-9"
             >
               <option value="all">All Roles</option>
@@ -185,7 +255,7 @@ export default function UsersPage() {
 
             <Select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => handleStatusChange(e.target.value)}
               className="w-full md:w-36 text-xs h-9"
             >
               <option value="all">All States</option>
@@ -230,8 +300,18 @@ export default function UsersPage() {
                 </tr>
               ) : displayedUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-12 text-slate-500">
-                    No users match your search and filter criteria.
+                  <td colSpan={6} className="py-8">
+                    <EmptyState
+                      icon={UsersIcon}
+                      title="No Users Found"
+                      description={
+                        search
+                          ? `No users matched "${search}". Try searching with a different keyword.`
+                          : "No user accounts are available under the selected filters."
+                      }
+                      actionLabel={search ? "Clear Search" : undefined}
+                      onAction={search ? handleClearSearch : undefined}
+                    />
                   </td>
                 </tr>
               ) : (
@@ -319,7 +399,7 @@ export default function UsersPage() {
                               open: true,
                               user,
                               action: "toggle_status",
-                              targetStatus: user.isActive === false ? true : false,
+                              targetStatus: user.isActive === false,
                               reason: "",
                             })
                           }
@@ -335,32 +415,17 @@ export default function UsersPage() {
           </table>
         </CardContent>
 
-        {/* Pagination Footer */}
-        {meta.totalPages > 1 && (
-          <div className="flex items-center justify-between p-4 border-t border-slate-100 text-xs text-slate-500">
-            <span>Page {meta.page} of {meta.totalPages}</span>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={page <= 1 || loading}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="h-8 text-xs"
-              >
-                Previous
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={page >= meta.totalPages || loading}
-                onClick={() => setPage((p) => p + 1)}
-                className="h-8 text-xs"
-              >
-                Next
-              </Button>
-            </div>
-          </div>
-        )}
+        {/* Enterprise Reusable Pagination */}
+        <div className="border-t border-slate-100 p-2">
+          <Pagination
+            page={page}
+            totalPages={meta.totalPages}
+            total={meta.total}
+            limit={limit}
+            onPageChange={handlePageChange}
+            onLimitChange={handleLimitChange}
+          />
+        </div>
       </Card>
 
       {/* User Details Modal */}

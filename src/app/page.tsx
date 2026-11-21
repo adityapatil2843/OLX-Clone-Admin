@@ -37,7 +37,7 @@ export default function DashboardOverviewPage() {
             <span className="text-xs text-slate-300">Live Backend Mode</span>
           </div>
           <h1 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight">
-            BharatBazaar Moderation Command
+            Bazarr360 Moderation Command
           </h1>
           <p className="mt-1 text-sm text-slate-300 max-w-2xl leading-relaxed">
             Live counts are queried directly from the backend server admin metrics endpoint. No simulated growth charts or fake analytics counters.

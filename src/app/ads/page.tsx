@@ -9,18 +9,11 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { ConfirmModal } from "@/components/ui/confirm-modal";
 import {
   Megaphone,
-  Plus,
   Play,
   Pause,
-  Film,
-  TrendingUp,
-  Eye,
-  MousePointerClick,
-  ExternalLink,
-  Calendar,
+  AlertTriangle,
 } from "lucide-react";
 import { formatINR, formatCompactNumber } from "@/lib/utils";
 import { toast } from "sonner";
@@ -118,11 +111,23 @@ export default function AdvertisementsPage() {
           </p>
         </div>
 
-        <Button onClick={() => setIsCreateOpen(true)} className="h-9">
-          <Plus className="h-4 w-4 mr-1.5" />
-          Create Ad Campaign
-        </Button>
+        <Badge variant="warning" className="w-fit text-xs px-3 py-1 font-semibold">
+          Blocked: Backend API Missing
+        </Badge>
       </div>
+
+      {/* Blocker & Unsupported Capability Notice */}
+      <Card className="border-amber-200 bg-amber-50/40">
+        <CardHeader>
+          <div className="flex items-center gap-2 text-amber-900 font-semibold text-base">
+            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
+            Feature Temporarily Unavailable - Backend Capability Missing
+          </div>
+          <CardDescription className="text-amber-800 text-xs mt-1 leading-relaxed">
+            The server does not expose administrative campaign management endpoints for advertisements. In accordance with zero-fake-data rules, campaign creation and mutation controls are disabled.
+          </CardDescription>
+        </CardHeader>
+      </Card>
 
       {/* Filter Toolbar */}
       <Card>
@@ -308,7 +313,7 @@ export default function AdvertisementsPage() {
               </label>
               <Select
                 value={newType}
-                onChange={(e) => setNewType(e.target.value as any)}
+                onChange={(e) => setNewType(e.target.value as Advertisement["campaignType"])}
               >
                 <option value="sponsored_reel">Sponsored Video Reel</option>
                 <option value="featured_listing">Top Featured Listing</option>

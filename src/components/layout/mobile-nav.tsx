@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { X, Sparkles } from "lucide-react";
+import { X } from "lucide-react";
 import { navigationItems } from "./sidebar";
 import { cn } from "@/lib/utils";
 
@@ -31,12 +32,24 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
         <div>
           <div className="flex items-center justify-between pb-4 border-b border-slate-100">
             <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 text-white shadow-md">
-                <Sparkles className="h-5 w-5" />
+              <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-xl bg-white shadow-xs border border-slate-100 flex items-center justify-center p-0.5">
+                <Image
+                  src="/logo-1.png"
+                  alt="Bazarr360 Logo"
+                  width={36}
+                  height={36}
+                  className="h-full w-full object-contain"
+                  priority
+                />
               </div>
-              <span className="text-base font-bold text-slate-900">
-                Bharat<span className="text-sky-600">Bazaar</span>
-              </span>
+              <div className="flex flex-col">
+                <span className="text-base font-bold text-slate-900 leading-none">
+                  Bazarr<span className="text-sky-600">360</span>
+                </span>
+                <span className="text-[10px] font-semibold tracking-wider text-slate-500 uppercase mt-0.5">
+                  Admin Console
+                </span>
+              </div>
             </div>
             <button
               onClick={onClose}
@@ -86,7 +99,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
 
         <div className="pt-4 border-t border-slate-100 text-center">
           <p className="text-[11px] text-slate-400">
-            BharatBazaar Marketplace Admin v1.0.0
+            Bazarr360 Marketplace Admin v1.0.0
           </p>
         </div>
       </div>

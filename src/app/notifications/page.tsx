@@ -12,14 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import {
   BellRing,
-  Plus,
   Send,
-  Calendar,
-  Users,
-  TrendingUp,
-  Clock,
-  Sparkles,
-  Smartphone,
+  AlertTriangle,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -39,13 +33,12 @@ const campaignSchema = z.object({
 type CampaignFormValues = z.infer<typeof campaignSchema>;
 
 export default function NotificationsPage() {
-  const [campaigns, setCampaigns] = React.useState<NotificationCampaign[]>(initialCampaigns);
+  const [campaigns] = React.useState<NotificationCampaign[]>(initialCampaigns);
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
 
   const {
     register,
     handleSubmit,
-    reset,
     formState: { errors },
   } = useForm<CampaignFormValues>({
     resolver: zodResolver(campaignSchema),
@@ -58,31 +51,9 @@ export default function NotificationsPage() {
     },
   });
 
-  const onSubmit = (data: CampaignFormValues) => {
-    const newCampaign: NotificationCampaign = {
-      id: `notif_${Date.now()}`,
-      title: data.title,
-      body: data.body,
-      audience: data.audience,
-      channel: data.channel,
-      deepLink: data.deepLink,
-      status: data.scheduledFor ? "scheduled" : "sent",
-      scheduledFor: data.scheduledFor,
-      sentAt: data.scheduledFor ? undefined : new Date().toISOString(),
-      recipientsCount: data.audience === "all" ? 186000 : 42000,
-      openRate: 0,
-      clickRate: 0,
-      createdAt: new Date().toISOString(),
-    };
-
-    setCampaigns((prev) => [newCampaign, ...prev]);
+  const onSubmit = () => {
+    toast.error("Campaign creation is disabled. Backend API endpoint is not implemented.");
     setIsCreateOpen(false);
-    reset();
-    toast.success(
-      data.scheduledFor
-        ? "Campaign scheduled successfully!"
-        : "Push notification broadcast initiated to target audience!"
-    );
   };
 
   const handleSendTestPush = (title: string) => {
@@ -105,11 +76,23 @@ export default function NotificationsPage() {
           </p>
         </div>
 
-        <Button onClick={() => setIsCreateOpen(true)} className="h-9">
-          <Plus className="h-4 w-4 mr-1.5" />
-          Create Campaign
-        </Button>
+        <Badge variant="warning" className="w-fit text-xs px-3 py-1 font-semibold">
+          Blocked: Backend API Missing
+        </Badge>
       </div>
+
+      {/* Blocker & Unsupported Capability Notice */}
+      <Card className="border-amber-200 bg-amber-50/40">
+        <CardHeader>
+          <div className="flex items-center gap-2 text-amber-900 font-semibold text-base">
+            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
+            Feature Temporarily Unavailable - Backend Capability Missing
+          </div>
+          <CardDescription className="text-amber-800 text-xs mt-1 leading-relaxed">
+            Push and in-app campaign broadcasting endpoints are not implemented on the server. To adhere to strict production guidelines, fake campaign dispatches are disabled.
+          </CardDescription>
+        </CardHeader>
+      </Card>
 
       {/* Campaigns Table */}
       <Card>
